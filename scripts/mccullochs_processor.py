@@ -107,8 +107,9 @@ for f1 in csv_files:
         formatted_date = None
         start_datetime = None
         duration_seconds = None
-        samples_emitted = 0
+        seconds_used = 0
         max_samples = None
+        current_timestamp = None
 
         for analog_row in analog_rows:
             if not analog_row:
@@ -155,13 +156,25 @@ for f1 in csv_files:
                 if start_datetime is None:
                     print(analog_row)
                 else:
-                    if max_samples is not None and samples_emitted >= max_samples:
-                        # we've already produced data up to the requested duration
+                    analog_id = analog_row[0]
+
+                    if analog_id == "A001":
+                        if max_samples is not None and seconds_used >= max_samples:
+                            # we've already produced data up to the requested duration
+                            break
+
+                        seconds_offset = seconds_used
+                        seconds_used += 1
+                        current_timestamp = start_datetime + timedelta(seconds=seconds_offset)
+                    elif current_timestamp is None:
+                        # In case the first analog row isn't A001, fallback to start time
+                        current_timestamp = start_datetime
+
+                    if max_samples is not None and seconds_used > max_samples:
                         continue
 
-                    current_timestamp = start_datetime + timedelta(seconds=samples_emitted)
-                    samples_emitted += 1
-                    print(f"{current_timestamp.strftime('%H:%M:%S')} -> {analog_row}")
+                    timestamp_label = current_timestamp.strftime("%H:%M:%S")
+                    print(f"{timestamp_label} -> {analog_row}")
 
             row_number = row_number + 1
 
