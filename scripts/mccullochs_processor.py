@@ -107,9 +107,9 @@ for f1 in csv_files:
         formatted_date = None
         start_datetime = None
         duration_seconds = None
-        seconds_used = 0
         max_samples = None
-        current_timestamp = None
+        analog_blocks = []
+        current_block = []
 
         for analog_row in analog_rows:
             if not analog_row:
@@ -153,29 +153,39 @@ for f1 in csv_files:
                 print("\n-----------------------\n")
 
             elif analog_row[0][:1] == "A":
-                if start_datetime is None:
-                    print(analog_row)
-                else:
-                    analog_id = analog_row[0]
+                analog_id = analog_row[0]
 
-                    if analog_id == "A001":
-                        if max_samples is not None and seconds_used >= max_samples:
-                            # we've already produced data up to the requested duration
-                            break
+                if analog_id == "A001" and current_block:
+                    analog_blocks.append(current_block)
+                    current_block = []
 
-                        seconds_offset = seconds_used
-                        seconds_used += 1
-                        current_timestamp = start_datetime + timedelta(seconds=seconds_offset)
-                    elif current_timestamp is None:
-                        # In case the first analog row isn't A001, fallback to start time
-                        current_timestamp = start_datetime
-
-                    if max_samples is not None and seconds_used > max_samples:
-                        continue
-
-                    timestamp_label = current_timestamp.strftime("%H:%M:%S")
-                    print(f"{timestamp_label} -> {analog_row}")
+                current_block.append(analog_row)
 
             row_number = row_number + 1
+
+        if current_block:
+            analog_blocks.append(current_block)
+
+        if not analog_blocks:
+            print("⚠️ No analog data blocks found.")
+            continue
+
+        seconds_to_emit = max_samples if max_samples is not None else len(analog_blocks)
+
+        for second_index in range(seconds_to_emit):
+            timestamp = (
+                start_datetime + timedelta(seconds=second_index)
+                if start_datetime is not None
+                else None
+            )
+            timestamp_label = timestamp.strftime("%H:%M:%S") if timestamp else f"Second {second_index}"
+
+            if second_index < len(analog_blocks):
+                block = analog_blocks[second_index]
+            else:
+                block = analog_blocks[-1]
+
+            for analog_row in block:
+                print(f"{timestamp_label} -> {analog_row}")
 
 print("\n✅ Processing completed!")
