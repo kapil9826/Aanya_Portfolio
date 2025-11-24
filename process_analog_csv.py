@@ -132,7 +132,7 @@ def resolve_config() -> Config:
     )
     max_files_env = os.environ.get("MCC_MAX_FILES")
     max_files = int(max_files_env) if max_files_env else None
-    print_json = os.environ.get("MCC_PRINT_JSON", "0") == "1"
+    print_json = os.environ.get("MCC_PRINT_JSON", "1") != "0"
 
     for path in (pending, completed, json_folder):
         os.makedirs(path, exist_ok=True)
@@ -156,25 +156,29 @@ def list_pending_csv_files(config: Config) -> List[str]:
 
     pending_files.sort()
 
-    selected: List[str] = []
-    used = set()
-    for suffix in TARGET_SUFFIX_SEQUENCE:
-        match = next(
-            (f for f in pending_files if f.endswith(suffix) and f not in used), None
-        )
-        if match:
-            selected.append(match)
-            used.add(match)
+    def split_base(filename: str) -> tuple[Optional[str], Optional[str]]:
+        for suffix in TARGET_SUFFIX_SEQUENCE:
+            if filename.endswith(suffix):
+                return filename[: -len(suffix)], suffix
+        return None, None
 
-    if len(selected) < len(TARGET_SUFFIX_SEQUENCE):
-        if selected:
-            print("ℹ️  Waiting for a complete set of A101/A301/A201/A001 files.")
-        return []
+    batches: Dict[str, Dict[str, str]] = {}
+    for filename in pending_files:
+        base_key, suffix = split_base(filename)
+        if base_key is None or suffix is None:
+            continue
+        batches.setdefault(base_key, {})[suffix] = filename
 
-    if config.max_files is not None:
-        selected = selected[: config.max_files]
+    for base_key in sorted(batches.keys()):
+        bucket = batches[base_key]
+        if all(suffix in bucket for suffix in TARGET_SUFFIX_SEQUENCE):
+            ordered_files = [bucket[suffix] for suffix in TARGET_SUFFIX_SEQUENCE]
+            if config.max_files is not None:
+                ordered_files = ordered_files[: config.max_files]
+            return ordered_files
 
-    return selected
+    print("ℹ️  Waiting for the first base sequence that includes A101/A301/A201/A001 files.")
+    return []
 
 
 def safe_float(value: Optional[str], default: Optional[float] = None) -> Optional[float]:
