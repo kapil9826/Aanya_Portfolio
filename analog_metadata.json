@@ -1,0 +1,13 @@
+[
+    {
+        "id": "A1",
+        "name": "Accelerator Pedal Position new - %",
+        "unit": "%",
+        "color": "#ebbb5e",
+        "min_color": "#6c38b6",
+        "max_color": "#107f76",
+        "resolution": 100.0,
+        "display": true,
+        "offset": "0"
+    }
+]
