@@ -28,7 +28,7 @@ import shutil
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 CSV_SUFFIXES = ("_A001.csv", "_A101.csv", "_A201.csv", "_A301.csv")
 
@@ -46,6 +46,73 @@ class Config:
     completed_folder: str
     json_folder: str
     max_files: Optional[int]
+
+
+def _default_metadata_path() -> str:
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), "analog_metadata.json")
+
+
+def load_analog_definitions() -> Dict[str, Dict[str, Any]]:
+    metadata_path = os.environ.get("MCC_ANALOG_META", _default_metadata_path())
+    if not os.path.exists(metadata_path):
+        return {}
+    try:
+        with open(metadata_path, "r", encoding="utf-8") as meta_file:
+            raw_definitions = json.load(meta_file)
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"⚠️  Unable to read analog metadata file {metadata_path}: {exc}")
+        return {}
+
+    if isinstance(raw_definitions, list):
+        candidates = {
+            str(entry["id"]): entry
+            for entry in raw_definitions
+            if isinstance(entry, dict) and entry.get("id")
+        }
+    elif isinstance(raw_definitions, dict):
+        candidates = {
+            str(key): value
+            for key, value in raw_definitions.items()
+            if isinstance(value, dict)
+        }
+    else:
+        candidates = {}
+
+    normalized: Dict[str, Dict[str, Any]] = {}
+    for analog_id, definition in candidates.items():
+        entry_copy = deepcopy(definition)
+        entry_copy["id"] = analog_id
+        entry_copy.pop("points", None)
+        normalized[analog_id] = entry_copy
+    return normalized
+
+
+ANALOG_DEFINITIONS = load_analog_definitions()
+ANALOG_ORDER_INDEX = {analog_id: index for index, analog_id in enumerate(ANALOG_DEFINITIONS)}
+
+
+def create_analog_entry(analog_id: str) -> Dict[str, Any]:
+    base_entry = deepcopy(ANALOG_DEFINITIONS.get(analog_id, {}))
+    base_entry.setdefault("id", analog_id)
+    base_entry.setdefault("name", analog_id)
+    base_entry.setdefault("unit", "")
+    base_entry.setdefault("color", "#999999")
+    base_entry.setdefault("min_color", base_entry["color"])
+    base_entry.setdefault("max_color", base_entry["color"])
+    base_entry.setdefault("resolution", 0.0)
+    base_entry.setdefault("display", True)
+    base_entry.setdefault("offset", "0")
+    base_entry["points"] = []
+    return base_entry
+
+
+def new_json_document() -> Dict[str, Any]:
+    document = deepcopy(JSON_TEMPLATE)
+    if ANALOG_DEFINITIONS:
+        document["analogPerSecond"] = [
+            create_analog_entry(analog_id) for analog_id in ANALOG_DEFINITIONS
+        ]
+    return document
 
 
 def resolve_config() -> Config:
@@ -142,7 +209,7 @@ def load_json(path: str) -> Dict:
                 return data
         except (json.JSONDecodeError, OSError) as exc:
             print(f"❌ Failed to read JSON {path}: {exc}. Rebuilding.")
-    return deepcopy(JSON_TEMPLATE)
+    return new_json_document()
 
 
 def save_json(path: str, data: Dict) -> None:
@@ -162,19 +229,18 @@ def build_analog_index(analog_per_second: List[Dict]) -> Dict[str, Dict]:
         analog_id = entry.get("id")
         if not analog_id:
             continue
-        index[analog_id] = {
-            "id": analog_id,
-            "points": [
-                {
-                    "time": point.get("time"),
-                    "avg": point.get("avg"),
-                    "max": point.get("max"),
-                    "min": point.get("min"),
-                }
-                for point in entry.get("points", [])
-                if point.get("time")
-            ],
-        }
+        entry_copy = deepcopy(entry)
+        entry_copy["points"] = [
+            {
+                "time": point.get("time"),
+                "avg": point.get("avg"),
+                "max": point.get("max"),
+                "min": point.get("min"),
+            }
+            for point in entry.get("points", [])
+            if point.get("time")
+        ]
+        index[analog_id] = entry_copy
     return index
 
 
@@ -224,8 +290,8 @@ def collect_global_timestamps(analog_index: Dict[str, Dict]) -> List[str]:
 def append_points(analog_index: Dict[str, Dict], analog_id: str, new_points: List[Dict]) -> None:
     if not new_points:
         return
-    entry = analog_index.setdefault(analog_id, {"id": analog_id, "points": []})
-    entry["points"] = merge_point_lists(entry["points"], new_points)
+    entry = analog_index.setdefault(analog_id, create_analog_entry(analog_id))
+    entry["points"] = merge_point_lists(entry.get("points", []), new_points)
 
 
 def constant_value_points(
@@ -354,9 +420,12 @@ def process_csv_file(file_name: str, config: Config) -> None:
             new_points = point_builder(row, seconds_count, start_time)
             append_points(analog_index, analog_id, new_points)
 
+    def sort_key(item: tuple[str, Dict[str, Any]]) -> tuple[int, str]:
+        analog_id = item[0]
+        return (ANALOG_ORDER_INDEX.get(analog_id, len(ANALOG_ORDER_INDEX)), analog_id)
+
     current_data["analogPerSecond"] = [
-        {"id": analog_id, "points": points["points"]}
-        for analog_id, points in sorted(analog_index.items())
+        deepcopy(points) for analog_id, points in sorted(analog_index.items(), key=sort_key)
     ]
     current_data["timestamps"] = collect_global_timestamps(analog_index)
 
