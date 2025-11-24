@@ -156,29 +156,31 @@ def list_pending_csv_files(config: Config) -> List[str]:
 
     pending_files.sort()
 
-    def split_base(filename: str) -> tuple[Optional[str], Optional[str]]:
-        for suffix in TARGET_SUFFIX_SEQUENCE:
-            if filename.endswith(suffix):
-                return filename[: -len(suffix)], suffix
-        return None, None
+    selected: List[str] = []
+    used = set()
+    missing_suffixes: List[str] = []
 
-    batches: Dict[str, Dict[str, str]] = {}
-    for filename in pending_files:
-        base_key, suffix = split_base(filename)
-        if base_key is None or suffix is None:
-            continue
-        batches.setdefault(base_key, {})[suffix] = filename
+    for suffix in TARGET_SUFFIX_SEQUENCE:
+        match = next(
+            (f for f in pending_files if f.endswith(suffix) and f not in used), None
+        )
+        if match:
+            selected.append(match)
+            used.add(match)
+        else:
+            missing_suffixes.append(suffix)
 
-    for base_key in sorted(batches.keys()):
-        bucket = batches[base_key]
-        if all(suffix in bucket for suffix in TARGET_SUFFIX_SEQUENCE):
-            ordered_files = [bucket[suffix] for suffix in TARGET_SUFFIX_SEQUENCE]
-            if config.max_files is not None:
-                ordered_files = ordered_files[: config.max_files]
-            return ordered_files
+    if missing_suffixes:
+        print(
+            f"ℹ️  Waiting for files ending with: {', '.join(missing_suffixes)} "
+            "to appear in the pending folder."
+        )
+        return []
 
-    print("ℹ️  Waiting for the first base sequence that includes A101/A301/A201/A001 files.")
-    return []
+    if config.max_files is not None:
+        selected = selected[: config.max_files]
+
+    return selected
 
 
 def safe_float(value: Optional[str], default: Optional[float] = None) -> Optional[float]:
