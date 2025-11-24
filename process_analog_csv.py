@@ -30,7 +30,8 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
-CSV_SUFFIXES = ("_A001.csv", "_A101.csv", "_A201.csv", "_A301.csv")
+TARGET_SUFFIX_SEQUENCE = ["_A101.csv", "_A301.csv", "_A201.csv", "_A001.csv"]
+CSV_SUFFIXES = tuple(TARGET_SUFFIX_SEQUENCE)
 
 JSON_TEMPLATE = {
     "timestamps": [],
@@ -46,6 +47,7 @@ class Config:
     completed_folder: str
     json_folder: str
     max_files: Optional[int]
+    print_json: bool
 
 
 def _default_metadata_path() -> str:
@@ -130,6 +132,7 @@ def resolve_config() -> Config:
     )
     max_files_env = os.environ.get("MCC_MAX_FILES")
     max_files = int(max_files_env) if max_files_env else None
+    print_json = os.environ.get("MCC_PRINT_JSON", "0") == "1"
 
     for path in (pending, completed, json_folder):
         os.makedirs(path, exist_ok=True)
@@ -139,6 +142,7 @@ def resolve_config() -> Config:
         completed_folder=completed,
         json_folder=json_folder,
         max_files=max_files,
+        print_json=print_json,
     )
 
 
@@ -149,10 +153,28 @@ def list_pending_csv_files(config: Config) -> List[str]:
         if filename.endswith(CSV_SUFFIXES)
         and os.path.isfile(os.path.join(config.pending_folder, filename))
     ]
+
     pending_files.sort()
+
+    selected: List[str] = []
+    used = set()
+    for suffix in TARGET_SUFFIX_SEQUENCE:
+        match = next(
+            (f for f in pending_files if f.endswith(suffix) and f not in used), None
+        )
+        if match:
+            selected.append(match)
+            used.add(match)
+
+    if len(selected) < len(TARGET_SUFFIX_SEQUENCE):
+        if selected:
+            print("ℹ️  Waiting for a complete set of A101/A301/A201/A001 files.")
+        return []
+
     if config.max_files is not None:
-        pending_files = pending_files[: config.max_files]
-    return pending_files
+        selected = selected[: config.max_files]
+
+    return selected
 
 
 def safe_float(value: Optional[str], default: Optional[float] = None) -> Optional[float]:
@@ -430,6 +452,8 @@ def process_csv_file(file_name: str, config: Config) -> None:
     current_data["timestamps"] = collect_global_timestamps(analog_index)
 
     save_json(json_path, current_data)
+    if config.print_json:
+        print(json.dumps(current_data, indent=2))
     move_to_completed(file_path, config.completed_folder)
     print(f"✅ Processed {file_name} → {json_name}")
 
