@@ -30,9 +30,19 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
-TARGET_SUFFIX_SEQUENCE = ["_A101.csv", "_A301.csv", "_A201.csv", "_A001.csv"]
-CSV_SUFFIXES = tuple(TARGET_SUFFIX_SEQUENCE)
-LOWER_SUFFIX_SEQUENCE = [suffix.lower() for suffix in TARGET_SUFFIX_SEQUENCE]
+CANONICAL_FILE_TYPES = ["A101", "A301", "A201", "A001"]
+
+FILE_TYPE_ALIASES = {
+    "A101": ["_a101.csv", "_100.csv"],
+    "A301": ["_a301.csv", "_300.csv"],
+    "A201": ["_a201.csv", "_200.csv"],
+    "A001": ["_a001.csv", "_d001.csv"],
+}
+
+ALIAS_LOOKUP = {}
+for canonical, aliases in FILE_TYPE_ALIASES.items():
+    for suffix in aliases:
+        ALIAS_LOOKUP[suffix] = canonical
 
 JSON_TEMPLATE = {
     "timestamps": [],
@@ -148,14 +158,16 @@ def resolve_config() -> Config:
 
 
 def list_pending_csv_files(config: Config) -> List[str]:
-    discovered = []
+    discovered: List[tuple[str, str]] = []
     for filename in os.listdir(config.pending_folder):
         file_path = os.path.join(config.pending_folder, filename)
         if not os.path.isfile(file_path):
             continue
         lower_name = filename.lower()
-        if any(lower_name.endswith(suffix) for suffix in LOWER_SUFFIX_SEQUENCE):
-            discovered.append((filename, lower_name))
+        for suffix in ALIAS_LOOKUP.keys():
+            if lower_name.endswith(suffix):
+                discovered.append((filename, lower_name))
+                break
 
     discovered.sort(key=lambda entry: entry[0])
     if not discovered:
@@ -164,14 +176,16 @@ def list_pending_csv_files(config: Config) -> List[str]:
 
     selected: List[str] = []
     used = set()
-    missing_suffixes: List[str] = []
+    missing_types: List[str] = []
 
-    for suffix, lower_suffix in zip(TARGET_SUFFIX_SEQUENCE, LOWER_SUFFIX_SEQUENCE):
+    for canonical in CANONICAL_FILE_TYPES:
+        aliases = FILE_TYPE_ALIASES[canonical]
         match = next(
             (
                 original_name
                 for original_name, lower_name in discovered
-                if lower_name.endswith(lower_suffix) and original_name not in used
+                if original_name not in used
+                and any(lower_name.endswith(alias) for alias in aliases)
             ),
             None,
         )
@@ -179,29 +193,29 @@ def list_pending_csv_files(config: Config) -> List[str]:
             selected.append(match)
             used.add(match)
         else:
-            missing_suffixes.append(suffix)
+            missing_types.append(canonical)
 
-    if missing_suffixes:
+    if missing_types:
         print(
-            f"ℹ️  Waiting for files ending with: {', '.join(missing_suffixes)} "
-            "to appear in the pending folder."
+            "ℹ️  Missing canonical analog files: "
+            + ", ".join(missing_types)
+            + ". Proceeding with available files."
         )
         print("ℹ️  Files currently detected:")
         for original_name, _ in discovered:
             print(f"    - {original_name}")
 
-        if len(discovered) >= len(TARGET_SUFFIX_SEQUENCE):
-            print(
-                "⚠️  Falling back to the first four analog CSV files that were found."
-            )
-            selected = [original_name for original_name, _ in discovered]
-            selected = selected[: len(TARGET_SUFFIX_SEQUENCE)]
-            return selected
-
+    if not selected:
+        print(
+            "⚠️  No recognized analog files available even after fallback; "
+            "waiting for the next batch."
+        )
         return []
 
     if config.max_files is not None:
         selected = selected[: config.max_files]
+    else:
+        selected = selected[: len(CANONICAL_FILE_TYPES)]
 
     return selected
 
@@ -271,6 +285,10 @@ def save_json(path: str, data: Dict) -> None:
 
 
 def extract_file_type(file_name: str) -> str:
+    lower_name = file_name.lower()
+    for suffix, canonical in ALIAS_LOOKUP.items():
+        if lower_name.endswith(suffix):
+            return canonical
     return file_name.rsplit("_", 1)[-1].split(".", 1)[0]
 
 
