@@ -211,6 +211,16 @@ def merge_point_lists(
     return sorted(point_map.values(), key=lambda item: item["time"])
 
 
+def collect_global_timestamps(analog_index: Dict[str, Dict]) -> List[str]:
+    times = set()
+    for entry in analog_index.values():
+        for point in entry.get("points", []):
+            time_value = point.get("time")
+            if time_value:
+                times.add(time_value)
+    return sorted(times)
+
+
 def append_points(analog_index: Dict[str, Dict], analog_id: str, new_points: List[Dict]) -> None:
     if not new_points:
         return
@@ -348,6 +358,7 @@ def process_csv_file(file_name: str, config: Config) -> None:
         {"id": analog_id, "points": points["points"]}
         for analog_id, points in sorted(analog_index.items())
     ]
+    current_data["timestamps"] = collect_global_timestamps(analog_index)
 
     save_json(json_path, current_data)
     move_to_completed(file_path, config.completed_folder)
