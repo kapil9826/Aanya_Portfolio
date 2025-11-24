@@ -32,6 +32,7 @@ from typing import Any, Dict, List, Optional
 
 TARGET_SUFFIX_SEQUENCE = ["_A101.csv", "_A301.csv", "_A201.csv", "_A001.csv"]
 CSV_SUFFIXES = tuple(TARGET_SUFFIX_SEQUENCE)
+LOWER_SUFFIX_SEQUENCE = [suffix.lower() for suffix in TARGET_SUFFIX_SEQUENCE]
 
 JSON_TEMPLATE = {
     "timestamps": [],
@@ -147,22 +148,32 @@ def resolve_config() -> Config:
 
 
 def list_pending_csv_files(config: Config) -> List[str]:
-    pending_files = [
-        filename
-        for filename in os.listdir(config.pending_folder)
-        if filename.endswith(CSV_SUFFIXES)
-        and os.path.isfile(os.path.join(config.pending_folder, filename))
-    ]
+    discovered = []
+    for filename in os.listdir(config.pending_folder):
+        file_path = os.path.join(config.pending_folder, filename)
+        if not os.path.isfile(file_path):
+            continue
+        lower_name = filename.lower()
+        if any(lower_name.endswith(suffix) for suffix in LOWER_SUFFIX_SEQUENCE):
+            discovered.append((filename, lower_name))
 
-    pending_files.sort()
+    discovered.sort(key=lambda entry: entry[0])
+    if not discovered:
+        print("ℹ️  No analog CSVs detected in the pending folder.")
+        return []
 
     selected: List[str] = []
     used = set()
     missing_suffixes: List[str] = []
 
-    for suffix in TARGET_SUFFIX_SEQUENCE:
+    for suffix, lower_suffix in zip(TARGET_SUFFIX_SEQUENCE, LOWER_SUFFIX_SEQUENCE):
         match = next(
-            (f for f in pending_files if f.endswith(suffix) and f not in used), None
+            (
+                original_name
+                for original_name, lower_name in discovered
+                if lower_name.endswith(lower_suffix) and original_name not in used
+            ),
+            None,
         )
         if match:
             selected.append(match)
@@ -175,6 +186,9 @@ def list_pending_csv_files(config: Config) -> List[str]:
             f"ℹ️  Waiting for files ending with: {', '.join(missing_suffixes)} "
             "to appear in the pending folder."
         )
+        print("ℹ️  Files currently detected:")
+        for original_name, _ in discovered:
+            print(f"    - {original_name}")
         return []
 
     if config.max_files is not None:
