@@ -189,6 +189,15 @@ def list_pending_csv_files(config: Config) -> List[str]:
         print("ℹ️  Files currently detected:")
         for original_name, _ in discovered:
             print(f"    - {original_name}")
+
+        if len(discovered) >= len(TARGET_SUFFIX_SEQUENCE):
+            print(
+                "⚠️  Falling back to the first four analog CSV files that were found."
+            )
+            selected = [original_name for original_name, _ in discovered]
+            selected = selected[: len(TARGET_SUFFIX_SEQUENCE)]
+            return selected
+
         return []
 
     if config.max_files is not None:
